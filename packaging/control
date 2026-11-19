@@ -1,0 +1,16 @@
+Package: nvrview
+Version: @VERSION@
+Section: video
+Priority: optional
+Architecture: all
+Maintainer: nvrview <nvrview@localhost>
+Installed-Size: @SIZE@
+Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gstreamer-1.0, gir1.2-secret-1, gstreamer1.0-gtk3, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, ffmpeg
+Recommends: python3-defusedxml, gnome-keyring
+Description: просмотр камер и архива регистраторов Hikvision/HiWatch
+ Онлайн-просмотр камер сеткой 1/4/9/16, архив с календарём и шкалой дня,
+ воспроизведение подряд с ускорением, скачивание записей в MP4.
+ .
+ Несколько регистраторов, вход своей учётной записью регистратора,
+ пароли в системном брелоке. Работает только на чтение: на регистраторе
+ ничего не меняет.

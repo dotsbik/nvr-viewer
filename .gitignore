@@ -1,0 +1,6 @@
+dist/
+build/
+__pycache__/
+*.pyc
+# локальные агенты и настройки Claude Code (внутренние пути и адреса)
+.claude/

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Видеорегистратор
+Name[en]=NVR Viewer
+Comment=Камеры и архив регистраторов Hikvision/HiWatch
+Comment[en]=Live view and recordings from Hikvision/HiWatch NVRs
+Exec=nvrview
+Icon=local.nvrview
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=камера;видеонаблюдение;регистратор;NVR;Hikvision;HiWatch;
+StartupWMClass=local.nvrview
+StartupNotify=true
