@@ -86,6 +86,26 @@ def unique_path(path: str) -> str:
     return f"{base} ({i}){ext}"
 
 
+HW_PREFIXES = ("vaapi", "va", "nvh", "nvv", "nvjpeg", "v4l2", "msdk", "qsv", "vulkan", "d3d", "vtdec")
+
+
+def software_decoding() -> list[str]:
+    """Отключить аппаратные декодеры видео (VA-API, NVDEC, V4L2, Vulkan…).
+
+    GStreamer ставит их выше программных, а на части видеокарт (драйвер nouveau и др.)
+    они роняют всю программу из потока видео. Потоки регистратора (H.264/H.265)
+    процессор декодирует через libav надёжно и без заметной нагрузки.
+    """
+    off = []
+    kinds = Gst.ELEMENT_FACTORY_TYPE_DECODER | Gst.ELEMENT_FACTORY_TYPE_MEDIA_VIDEO
+    for f in Gst.ElementFactory.list_get_elements(kinds, Gst.Rank.NONE):
+        klass = f.get_metadata("klass") or ""
+        if f.get_rank() > 0 and ("Hardware" in klass or f.get_name().startswith(HW_PREFIXES)):
+            f.set_rank(Gst.Rank.NONE)
+            off.append(f.get_name())
+    return off
+
+
 def make_sink():
     sink = Gst.ElementFactory.make("gtksink")
     if sink is None:

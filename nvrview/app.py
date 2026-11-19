@@ -43,6 +43,12 @@ def main() -> int:
 
     path = setup()
     log.info("запуск, журнал %s", path)
+    # Падение внутри системных библиотек (GStreamer, драйвер видеокарты) не даёт ошибки Python:
+    # faulthandler допишет в журнал, где именно это случилось.
+    import faulthandler
+    global _fault_file
+    _fault_file = open(path, "a", encoding="utf-8")
+    faulthandler.enable(_fault_file, all_threads=True)
     GLib_set_name(APP_NAME)
 
     class App(Gtk.Application):
@@ -53,6 +59,10 @@ def main() -> int:
         def do_startup(self):
             Gtk.Application.do_startup(self)
             Gst.init(None)
+            from .ui.common import software_decoding
+            off = software_decoding()
+            if off:
+                log.info("аппаратные декодеры отключены: %s", ", ".join(off))
             prov = Gtk.CssProvider()
             prov.load_from_data(CSS)
             Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), prov,
@@ -67,6 +77,9 @@ def main() -> int:
             self.win.present()
 
     return App().run(sys.argv[:1])
+
+
+_fault_file = None
 
 
 def GLib_set_name(name: str):

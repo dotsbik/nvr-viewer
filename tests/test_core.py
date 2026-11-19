@@ -439,6 +439,22 @@ class HelpersTest(unittest.TestCase):
                          ["1 файл", "3 файла", "5 файлов", "11 файлов", "21 файл", "22 файла", "112 файлов"])
 
 
+class DecodersTest(unittest.TestCase):
+    def test_hardware_decoders_disabled(self):
+        import gi
+        gi.require_version("Gst", "1.0")
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("Gdk", "3.0")
+        from gi.repository import Gst
+        Gst.init(None)
+        from nvrview.ui.common import software_decoding
+        software_decoding()
+        kinds = Gst.ELEMENT_FACTORY_TYPE_DECODER | Gst.ELEMENT_FACTORY_TYPE_MEDIA_VIDEO
+        hw = [f.get_name() for f in Gst.ElementFactory.list_get_elements(kinds, Gst.Rank.MARGINAL)
+              if "Hardware" in (f.get_metadata("klass") or "")]
+        self.assertEqual(hw, [], "аппаратные декодеры не должны выбираться автоматически")
+
+
 @unittest.skipUnless(shutil.which("ffmpeg"), "нет ffmpeg")
 class MediaTest(unittest.TestCase):
     def test_remux_and_concat(self):
