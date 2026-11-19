@@ -325,7 +325,7 @@ def probe(host: str, port: int, https: bool, pin: str = "", timeout: float = 8) 
         seen.append(fp)
         if pin and not hmac.compare_digest(fp, pin):
             raise CertError("Сертификат регистратора не совпадает с сохранённым: возможна подмена. "
-                            "Если сертификат меняли намеренно, нажмите «Сбросить отпечаток».")
+                            "Если сертификат меняли намеренно, нажмите ниже «Сбросить отпечаток сертификата».")
     scheme = "https" if https else "http"
     h = f"[{host}]" if ":" in host else host
     url = f"{scheme}://{h}:{port}/ISAPI/System/deviceInfo"
@@ -417,7 +417,7 @@ class Nvr:
                 raise CertError("Сертификат регистратора изменился, соединение остановлено: это может быть "
                                 "подмена. Пароль не отправлен. Если сертификат меняли намеренно (например, "
                                 "после обновления прошивки), нажмите «Регистраторы», выберите этот регистратор, "
-                                "«Изменить» и «Сбросить отпечаток».")
+                                "«Изменить» и «Сбросить отпечаток сертификата».")
 
     def _opener(self):
         mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
@@ -654,8 +654,9 @@ class Nvr:
                     chal = [v for k, v in hdrs if k == "www-authenticate"]
                     dig = next((c for c in chal if c.lower().startswith("digest")), None)
                     if dig is None:
-                        raise InsecureAuthError("Регистратор просит пароль для видео открытым текстом (Basic). "
-                                                "Пароль не отправлен. Включите на регистраторе Digest для RTSP.")
+                        raise InsecureAuthError("Регистратор просит пароль для видео без защиты, поэтому программа "
+                                                "его не отправила. Обратитесь к администратору регистратора "
+                                                "(нужно включить Digest для RTSP).")
                     prm = {m[0].lower(): m[1] or m[2]
                            for m in re.findall(r'(\w+)=(?:"([^"]*)"|([^,\s]*))', dig[6:])}
                     realm, nonce = prm.get("realm", ""), prm.get("nonce", "")

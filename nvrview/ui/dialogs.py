@@ -173,7 +173,7 @@ class DeviceDialog(Gtk.Dialog):
 
     def _show_pin(self):
         has = bool(self.pin)
-        self.pin_label.set_text("Сертификат регистратора запомнен ✓" if has else "")
+        self.pin_label.set_text("Сертификат регистратора запомнен при первом входе" if has else "")
         self.pin_label.set_tooltip_text(f"Отпечаток SHA-256 (для администратора):\n{fingerprint_text(self.pin)}"
                                         if has else None)
         self.pin_label.set_visible(has)

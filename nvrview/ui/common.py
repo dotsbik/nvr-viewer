@@ -115,6 +115,15 @@ def black_box() -> Gtk.DrawingArea:
     return a
 
 
+def set_status(label: Gtk.Label, text: str):
+    """Надпись поверх видео: светлый текст на тёмной подложке, читается на любом кадре."""
+    if not text:
+        label.set_text("")
+        return
+    label.set_markup('<span background="#000000" bgalpha="78%" foreground="#ffffff">'
+                     + "\n".join(f" {GLib.markup_escape_text(x)} " for x in text.split("\n")) + "</span>")
+
+
 def plural(n: int, one: str, few: str, many: str) -> str:
     """3 файла, 5 файлов, 21 файл."""
     m10, m100 = n % 10, n % 100

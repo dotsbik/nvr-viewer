@@ -16,7 +16,7 @@ from gi.repository import GLib, Gst, Gtk, Pango
 from ..isapi import AuthError, Camera, ForbiddenError, InsecureAuthError, NvrError, Record
 from ..log import log
 from ..media import Archive
-from .common import (bg, black_box, ellipsize_combo, err_text, fmt_dur, fmt_size, gst_text, icon_button, is_double,
+from .common import (bg, black_box, ellipsize_combo, set_status, err_text, fmt_dur, fmt_size, gst_text, icon_button, is_double,
                      make_sink, open_folder, safe_name, ui, unique_path)
 from .timeline import Timeline
 
@@ -95,6 +95,9 @@ class ArchivePage(Gtk.Paned):
         self.reconnect_at: dt.datetime | None = None
         self.resume: tuple[int, dt.datetime] | None = None  # продолжить после возврата на вкладку
         self._last_time: dt.datetime | None = None
+        self._buf_mono = 0.0        # когда пришёл последний кадр (монотонные секунды)
+        self._paused_mono = 0.0     # когда поставили на паузу
+        self._dead_restarts = 0     # переподключения подряд без кадров
 
         # ----- левая панель -----
         left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=8)
@@ -203,10 +206,10 @@ class ArchivePage(Gtk.Paned):
         self.cover = black_box()  # прячет кадры до перемотки на нужное время
         self.cover.set_no_show_all(True)
         ov.add_overlay(self.cover)
-        self.pstatus = Gtk.Label(label="Выберите запись в списке или щёлкните по шкале",
-                                 halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, wrap=True,
+        self.pstatus = Gtk.Label(halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, wrap=True,
                                  justify=Gtk.Justification.CENTER)
         self.pstatus.get_style_context().add_class("status")
+        set_status(self.pstatus, "Выберите запись в списке или щёлкните по шкале")
         self.pstatus.set_no_show_all(True)
         self.pstatus.show()
         ov.add_overlay(self.pstatus)
@@ -225,7 +228,7 @@ class ArchivePage(Gtk.Paned):
                           icon_button("media-skip-forward-symbolic", "Следующая запись", lambda: self.step(1))]
         for b in self.controls:
             ctl.pack_start(b, False, False, 0)
-        self.clock = Gtk.Label(label="--:--:--", width_chars=9)
+        self.clock = Gtk.Label(label="--:--:--", width_chars=10)
         ctl.pack_start(self.clock, False, False, 4)
         self.scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 0.1)
         self.scale.set_draw_value(False)
@@ -356,7 +359,7 @@ class ArchivePage(Gtk.Paned):
     def _say(self, text, summary=True):
         if summary:
             self.summary.set_text(text)
-        self.pstatus.set_text(text)
+        set_status(self.pstatus, text)
         self.pstatus.show()
 
     def _ready(self) -> bool:
@@ -428,7 +431,7 @@ class ArchivePage(Gtk.Paned):
         self.timeline.set_records(day, recs)
         if recs:
             self.summary.set_text(self._summary_text())
-            self.pstatus.set_text("Выберите запись в списке или щёлкните по шкале")
+            set_status(self.pstatus, "Выберите запись в списке или щёлкните по шкале")
         else:
             self._say("За этот день записей нет")
         self.pstatus.show()
@@ -512,6 +515,7 @@ class ArchivePage(Gtk.Paned):
         self.reconnect_at = None
         self.cover.hide()
         self.clock.set_text("--:--:--")
+        self.clock.set_tooltip_text(None)
         self.scale.get_adjustment().configure(0, 0, 1, 1, 5, 0)
         self.timeline.set_cursor(None, -1)
         self._set_play_icon(False)
@@ -614,6 +618,7 @@ class ArchivePage(Gtk.Paned):
                 self._ever_abs = self._ever_abs or self._seg_abs
             return Gst.PadProbeReturn.OK
         pts = info.get_buffer().pts
+        self._buf_mono = GLib.get_monotonic_time() / 1e6
         if pts != Gst.CLOCK_TIME_NONE:
             if self.s_first is None:
                 self.s_first = pts
@@ -634,13 +639,18 @@ class ArchivePage(Gtk.Paned):
         self.mode = "stream"
         self.pending = None
         self.user_paused = False
-        self.s_base, self.s_first, self.s_last = when, None, None
+        # Без ONVIF регистратор начинает с начала файла записи: часы считаем от него.
+        base = self.records[self.cur].start if (s.no_onvif and 0 <= self.cur < len(self.records)) else when
+        self.s_base, self.s_first, self.s_last = base, None, None
         self.s_target, self.s_now, self._seg, self._seg_abs = when, None, None, False
+        self._buf_mono = 0.0
         self._s_seek_sent = False
         self._ever_abs = False
         self._s_started = GLib.get_monotonic_time() / 1e6
         self.cover.show()
-        self.pstatus.set_text(f"Подключение к архиву, {when:%H:%M:%S}…")
+        self.clock.set_tooltip_text("Время приблизительное (± несколько секунд): регистратор начинает показ с "
+                                    "ближайшего опорного кадра. Точное время напечатано на самом кадре.")
+        set_status(self.pstatus, f"Подключение к архиву, {when:%H:%M:%S}…")
         self.pstatus.show()
         self._set_play_icon(True)
         url = nvr.rtsp_playback(cam.id, when)
@@ -655,8 +665,7 @@ class ArchivePage(Gtk.Paned):
                 return
             if isinstance(e, ForbiddenError):
                 self._no_stream_rights(self.cur)
-            elif not isinstance(e, InsecureAuthError) and not s.is_forbidden("download", cam.id) \
-                    and 0 <= self.cur < len(self.records):
+            elif not s.is_forbidden("download", cam.id) and 0 <= self.cur < len(self.records):
                 # Поток недоступен (порт RTSP закрыт и т.п.), но скачивать можно: показываем файлом.
                 self.win.show_info(f"Поток архива недоступен ({str(e).rstrip('.')}). Запись скачивается "
                                    "для просмотра.", Gtk.MessageType.WARNING, autohide=True)
@@ -672,6 +681,7 @@ class ArchivePage(Gtk.Paned):
     def _stream_seek(self, when: dt.datetime):
         self.s_target, self.s_now, self._seg_abs = when, None, False
         self.user_paused = False
+        self._buf_mono = GLib.get_monotonic_time() / 1e6
         self.player.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, onvif_ns(when),
                          Gst.SeekType.NONE, -1)
         self.player.set_state(Gst.State.PLAYING)
@@ -684,7 +694,31 @@ class ArchivePage(Gtk.Paned):
             return None
         return self.s_base + dt.timedelta(microseconds=(self.s_last - self.s_first) // 1000)
 
+    def _watchdog(self) -> bool:
+        """Видео перестало идти (обрыв без сообщения об ошибке): переподключаемся с того же места."""
+        if self.user_paused or self.at_end or self.reconnect_at is not None or self._seek_id:
+            return False
+        now = GLib.get_monotonic_time() / 1e6
+        last = self._buf_mono or self._s_started
+        if now - last < (20 if self.s_first is None else 10):
+            return False
+        when = self.stream_time() or self.s_target or self.s_base
+        self._dead_restarts += 1
+        if self._dead_restarts > 3 or when is None:
+            self.stop_player("Регистратор перестал отдавать видео. Проверьте связь и нажмите ▶")
+            return True
+        log.info("архив: нет кадров %.0f с, переподключение", now - last)
+        found = self._index_at(when)
+        if found:
+            self._seg_abs = False
+            self.play_at(*found)
+            set_status(self.pstatus, "Связь прервалась, подключаюсь заново…")
+            self.pstatus.show()
+        return True
+
     def _stream_tick(self):
+        if self._watchdog():
+            return
         t = self.stream_time()
         if t is None:
             waited = GLib.get_monotonic_time() / 1e6 - self._s_started
@@ -703,6 +737,7 @@ class ArchivePage(Gtk.Paned):
             self.pstatus.hide()
             self.cover.hide()
             self._s_retried = False
+        self._dead_restarts = 0
         self.s_target = None
         r = self.records[self.cur]
         if not (r.start - dt.timedelta(seconds=GAP) <= t < r.end):
@@ -712,6 +747,13 @@ class ArchivePage(Gtk.Paned):
             found = self._index_at(t)
             if found is None:
                 self.stop_player("Записи за этот день закончились")
+                return
+            if self.s_onvif and (found[1] - t).total_seconds() > 1:
+                # Время попало в разрыв между записями: регистратор его пропустил, а метки
+                # кадров идут подряд. Перематываем на начало следующей записи, чтобы часы были верны.
+                self.cur = found[0]
+                self.tree.set_cursor(Gtk.TreePath(self.cur), None, False)
+                self._stream_seek(found[1])
                 return
             if found[0] != self.cur:
                 if not self.s_onvif:
@@ -723,7 +765,8 @@ class ArchivePage(Gtk.Paned):
                 self.cur = found[0]
                 self.tree.set_cursor(Gtk.TreePath(self.cur), None, False)
             r = self.records[self.cur]
-        self.clock.set_text(f"{t:%H:%M:%S}")
+        # Регистратор начинает показ с ближайшего опорного кадра, поэтому время приблизительное.
+        self.clock.set_text(f"≈{t:%H:%M:%S}")
         self.scale.get_adjustment().configure(max(0.0, (t - r.start).total_seconds()), 0, max(1.0, r.seconds),
                                               1, 30, 0)
         self.timeline.set_cursor(self.timeline.secs(t), self.cur)
@@ -735,7 +778,7 @@ class ArchivePage(Gtk.Paned):
         self.at_end = True
         self.clock.set_text(f"{r.end:%H:%M:%S}")
         self.timeline.set_cursor(self.timeline.secs(r.end), self.cur)
-        self.pstatus.set_text("Запись закончилась. ▶: следующая запись")
+        set_status(self.pstatus, "Запись закончилась. ▶: следующая запись")
         self.pstatus.show()
 
     def _current_time(self) -> dt.datetime | None:
@@ -769,12 +812,12 @@ class ArchivePage(Gtk.Paned):
         r = self.records[i]
         if not os.path.exists(self.win.archive.cache_path(s.device.id, r)):
             size = f" ({fmt_size(r.size)})" if r.size else ""
-            self.pstatus.set_text(f"Загрузка записи {r.start:%H:%M:%S}{size} для ускоренного просмотра…"
+            set_status(self.pstatus, f"Загрузка записи {r.start:%H:%M:%S}{size} для ускоренного просмотра…"
                                   if self._rate() != 1.0 else f"Загрузка записи {r.start:%H:%M:%S}{size}…")
             self.pstatus.show()
 
         def prog(f):
-            ui(lambda: tok == self.play_token and self.pstatus.set_text(
+            ui(lambda: tok == self.play_token and set_status(self.pstatus,
                 f"Загрузка записи {r.start:%H:%M:%S}: {int(f * 100)}%"))
 
         def fail(e):
@@ -784,8 +827,13 @@ class ArchivePage(Gtk.Paned):
                 s.mark_forbidden("download", cam.id)
                 self._set_rights()
                 if not s.is_forbidden("playback", cam.id):
-                    self.win.show_info("Нет прав на скачивание: архив будет показан потоком, с обычной скоростью.",
-                                       Gtk.MessageType.WARNING, autohide=True)
+                    if s.no_onvif:
+                        self.win.show_info(f"Этот регистратор не перематывает видео внутри записи, а скачивать "
+                                           f"вашей учётной записи нельзя: запись показывается с начала, "
+                                           f"с {r.start:%H:%M:%S}.", Gtk.MessageType.WARNING)
+                    else:
+                        self.win.show_info("Нет прав на скачивание: архив будет показан потоком, с обычной "
+                                           "скоростью.", Gtk.MessageType.WARNING, autohide=True)
                     self.play_at(i, r.start + dt.timedelta(seconds=offset))
                 else:
                     self._say("Нет прав на просмотр архива этой камеры", summary=False)
@@ -832,6 +880,7 @@ class ArchivePage(Gtk.Paned):
             mode, when = self.mode, self._current_time()
             self.player.set_state(Gst.State.NULL)
             self._set_play_icon(False)
+            self._seg_abs = self._s_seek_sent = False  # старый сеанс закрыт: дальше только новое подключение
             text = f"{err.message or ''} {dbg or ''}"
             if mode == "stream" and (err.matches(Gst.ResourceError.quark(), Gst.ResourceError.NOT_AUTHORIZED)
                                      or "nauthorized" in text or "orbidden" in text):
@@ -839,7 +888,8 @@ class ArchivePage(Gtk.Paned):
             elif mode == "stream" and when is not None and self.user_paused:
                 # Пауза долгая, регистратор закрыл сеанс: сами не включаем, ждём ▶.
                 self.reconnect_at = when
-                self.pstatus.set_text("Регистратор закрыл соединение во время паузы. ▶: продолжить")
+                self.mode = None
+                set_status(self.pstatus, "Регистратор закрыл соединение во время паузы. ▶: продолжить")
                 self.pstatus.show()
             elif mode == "stream" and when is not None and not self._s_retried:
                 self._s_retried = True
@@ -902,14 +952,22 @@ class ArchivePage(Gtk.Paned):
             found = self._index_at(self.reconnect_at)
             self.reconnect_at = None
             if found:
-                self.pstatus.set_text("Подключаюсь заново…")
+                set_status(self.pstatus, "Подключаюсь заново…")
                 self.play_at(*found)
             return
         _r, state, _p = self.player.get_state(0)
         if state == Gst.State.PLAYING:
             self.player.set_state(Gst.State.PAUSED)
             self.user_paused = True
+            self._paused_mono = GLib.get_monotonic_time() / 1e6
             self._set_play_icon(False)
+        elif self.mode == "stream" and self.user_paused and GLib.get_monotonic_time() / 1e6 - self._paused_mono > 15:
+            # После долгой паузы регистратор мог молча закрыть сеанс: подключаемся заново с того же места.
+            when = self._current_time()
+            found = self._index_at(when) if when else None
+            if found:
+                self._seg_abs = False
+                self.play_at(*found)
         elif self.mode is not None:
             self.player.set_state(Gst.State.PLAYING)
             self.user_paused = False

@@ -11,7 +11,7 @@ from gi.repository import Gdk, GLib, Gst, Gtk, Pango
 from ..devices import LAYOUTS
 from ..isapi import AuthError, Camera, ForbiddenError, InsecureAuthError, NotSupportedError, NvrError
 from ..log import log
-from .common import (bg, black_box, gst_text, icon_button, is_double, make_sink, pictures_dir, safe_name, ui,
+from .common import (bg, black_box, gst_text, set_status, icon_button, is_double, make_sink, pictures_dir, safe_name, ui,
                      unique_path)
 
 TILE_TIP = "Двойной щелчок: крупно, в лучшем качестве. Правый щелчок: меню камеры"
@@ -47,9 +47,10 @@ class LiveTile(Gtk.EventBox):
         name.get_style_context().add_class("camname")
         self.set_tooltip_text(f"{cam.name}\n{TILE_TIP}" if not main else cam.name)
         ov.add_overlay(name)
-        self.status = Gtk.Label(label="Подключение…" if cam.online else "Камера не в сети",
+        self.status = Gtk.Label(
                                 halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, wrap=True, justify=Gtk.Justification.CENTER)
         self.status.get_style_context().add_class("status")
+        set_status(self.status, "Подключение…" if cam.online else "Камера не в сети")
         self.status.set_no_show_all(True)
         self.status.show()
         ov.add_overlay(self.status)
@@ -85,7 +86,7 @@ class LiveTile(Gtk.EventBox):
         self.status.hide()
 
     def show_status(self, text):
-        self.status.set_text(text)
+        set_status(self.status, text)
         self.status.show()
 
     def _build(self):
